@@ -1,72 +1,76 @@
-use handler::handle_file;
+use http_server_tiny::{HttpServer, Method, Res};
 use serde::Deserialize;
 use serde::Serialize;
 use std::{fs::OpenOptions, io::Write};
-use tiny_http::{Header, Method, Response, Server};
-mod handler;
 
 #[derive(Serialize, Deserialize)]
 struct TodoList {
     todos: Vec<String>,
 }
 
-pub fn deploy() -> Result<(), std::io::Error> {
-    let server = Server::http("0.0.0.0:8000").unwrap();
-    println!("Server started on: localhost:8000");
+pub fn deploy() -> Result<(), Box<dyn std::error::Error>> {
+    let mut server = HttpServer::new("0.0.0.0:8000", "./error.html");
+    server.add_route(
+        &Method::Get,
+        "/",
+        Box::new(|_| Res::File {
+            name: "./index.html",
+            ct: "text/html; charset=utf-8",
+            sc: 200,
+        }),
+    );
+    server.add_route(
+        &Method::Get,
+        "/index.js",
+        Box::new(|_| Res::File {
+            name: "./index.js",
+            ct: "text/html; charset=utf-8",
+            sc: 200,
+        }),
+    );
+    server.add_route(
+        &Method::Post,
+        "/api/todo",
+        Box::new(|req| {
+            add_todo(req.content).unwrap();
+            Res::Empty
+        }),
+    );
+    server.add_route(
+        &Method::Get,
+        "/api/todo",
+        Box::new(|_| {
+            let todo_list = get_todos().unwrap();
+            let todo_list = serde_json::to_string_pretty(&todo_list).unwrap();
+            Res::Json(todo_list)
+        }),
+    );
+    server.add_route(
+        &Method::Delete,
+        "/api/todo",
+        Box::new(|_| {
+            std::fs::remove_file("index.json").unwrap();
+            Res::Empty
+        }),
+    );
+    server.add_route(
+        &Method::Delete,
+        "/api/todo/remove",
+        Box::new(|req| {
+            let todos = serde_json::from_str(&req.content).unwrap();
+            std::fs::remove_file("index.json").unwrap();
+            update_todos(todos).unwrap();
 
-    for mut request in server.incoming_requests() {
-        println!(
-            "INFO: Recieved request!\nMethod: {:?}\nUrl: {:?}\n",
-            request.method(),
-            request.url(),
-        );
+            Res::Empty
+        }),
+    );
 
-        match (request.method(), request.url()) {
-            (Method::Get, "/") => {
-                handle_file(request, "index.html", Some("text/html; charset=utf-8"))?;
-            }
-            (Method::Get, "/index.js") => {
-                handle_file(request, "index.js", Some("text/javascript; charset=utf-8"))?;
-            }
-            (Method::Post, "/api/todo") => {
-                let mut todo = String::new();
-                request.as_reader().read_to_string(&mut todo)?;
-                add_todo(todo)?;
-                request.respond(Response::empty(200))?;
-            }
-            (Method::Get, "/api/todo") => {
-                let todo_list = get_todos()?;
-                let todo_list = serde_json::to_string_pretty(&todo_list)?;
-                let header = Header::from_bytes("Content-Type", "application/json").expect("ERROR");
-                request.respond(
-                    Response::from_string(&todo_list)
-                        .with_status_code(200)
-                        .with_header(header),
-                )?;
-            }
-            (Method::Delete, "/api/todo") => {
-                std::fs::remove_file("index.json")?;
-                request.respond(Response::empty(200))?;
-            }
-            (Method::Delete, "/api/todo/remove") => {
-                let mut new_todo_list = String::new();
-                request.as_reader().read_to_string(&mut new_todo_list)?;
-
-                let json_todos = serde_json::from_str(&new_todo_list)?;
-
-                std::fs::remove_file("index.json")?;
-                update_todos(json_todos)?;
-
-                request.respond(Response::empty(200))?;
-            }
-            _ => handle_file(request, "error.html", None)?,
-        }
-    }
+    server.handle_requests()?;
 
     Ok(())
 }
 
-fn add_todo(todo: String) -> Result<(), std::io::Error> {
+fn add_todo(todo: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -83,7 +87,7 @@ fn add_todo(todo: String) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn get_todos() -> Result<TodoList, std::io::Error> {
+fn get_todos() -> Result<TodoList, Box<dyn std::error::Error>> {
     OpenOptions::new()
         .read(true)
         .write(true)
@@ -99,7 +103,7 @@ fn get_todos() -> Result<TodoList, std::io::Error> {
     Ok(todo_list)
 }
 
-fn update_todos(todo_list: TodoList) -> Result<(), std::io::Error> {
+fn update_todos(todo_list: TodoList) -> Result<(), Box<dyn std::error::Error>> {
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -107,7 +111,7 @@ fn update_todos(todo_list: TodoList) -> Result<(), std::io::Error> {
         .open("index.json")?;
 
     let text = serde_json::to_string_pretty(&todo_list)?;
-    println!("{text}");
+
     file.write_all(text.as_bytes())?;
 
     Ok(())
